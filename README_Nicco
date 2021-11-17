@@ -1,0 +1,13 @@
+# Description of the files in this folder (Nicco)
+
+- Snakemake_nicco --> Pipeline for the analysis of pacbio data. This pipeline does:
+    1. check of md5 check-sum (when this is available)
+    2. ccs algorithm (very shallow parameters for number of passes and read quality, to get as much output as possible)
+    3. split hifi (number of passes >3 and read quality > 0.99) from non-hifi reads
+    4. align hifi reads to GRCh38
+    5. align non-hifi reads to GRCh38
+    6. perform sample check to annotate the correct sample based on genotypes from Pacbio hifi and GWAS array data
+
+- script_sample_check_v2.py --> Script to perform sample check procedure (step 6 above)
+
+- check_files.R --> Script to double check the correct functioning of the pipeline
