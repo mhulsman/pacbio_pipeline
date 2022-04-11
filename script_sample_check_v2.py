@@ -128,7 +128,7 @@ def comparePacbioArray(sample):
 # 1. manage arguments
 input_file = sys.argv[1]
 output_file = sys.argv[2]
-MAIN = "/project/holstegelab/Software/nicco/bin/Snakemake_pipeline/sample_check_snakemake/"
+MAIN = "/project/holstegelab/Software/snakemake_pipeline/sample_check_data/"
 
 # 2. read snps, genotypes and phenotypes
 print("## Reading SNPs, Phenotypes and Genotypes...\n")
@@ -138,7 +138,7 @@ genotypes = pd.read_csv(MAIN + "dosages_random_set_snps_all_samples.raw.gz", sep
 
 # 3. extract SNPs from pacbio
 snps_to_serch = snps_info['id']
-with Pool(12) as p:
+with Pool(4) as p:
     pacbio_snps = p.map(extractPacbioSNPs, snps_to_serch)
 
 # 4. clean pacbio snps -- use also coverage

@@ -1,0 +1,189 @@
+### PACKAGES
+import os
+import csv
+import sys
+import re
+
+### SOFTWARE PATHS
+PYTHON="/project/holstegelab/Software/conda/miniconda3_v1/envs/py37/bin/python"
+PRIMROSE="/project/holstegelab/Software/conda/miniconda3_v1/envs/py39/bin/primrose"
+CCS="/project/holstegelab/Software/conda/miniconda3_v1/envs/py37/bin/ccs"
+MD5="/usr/bin/md5sum"
+EXTRACT_CCS="/project/holstegelab/Software/snakemake_pipeline/bin/extract_ccs_and_nonCCS.py"
+ALIGN="/project/holstegelab/Software/conda/miniconda3_v1/envs/py37/bin/pbmm2"
+SAMPLE_CHECK="/project/holstegelab/Software/snakemake_pipeline/bin/sample_check.py"
+
+### RESOURCE PATHS
+H38CCS='/project/holstegelab/Share/pacbio/resources/h38_ccs.mmi'
+HG38SUBREADS='/project/holstegelab/Share/pacbio/resources/h38_subread.mmi'
+CHM13CCS='/project/holstegelab/Share/asalazar/data/chm13/assembly/v2_0/chm13v2.0_hifi.mmi'
+CHM13SUBREADS='/project/holstegelab/Share/asalazar/data/chm13/assembly/v2_0/chm13v2.0_subreads.mmi'
+
+CACHE=None
+
+### FUNCTIONS
+# Function to perform MD5 checksum and return True/False (RUN)
+def checkSum(path, MD5):
+    # first check if any .md5 file is present in the input directory
+    flist = os.popen("ls %s" %(path)).read().rstrip().split("\n")
+    md5 = list(filter(lambda x: re.search(r'md5$', x), flist))
+    match_done = list(filter(lambda x: re.search(r'md5checksum.txt', x), flist))
+    if (len(md5) == 1) & (len(match_done) == 0):
+        print("## MD5 file found. Now checking all files were correctly copied.")
+        # read and store MD5 file
+        md5_file = []
+        with open(path + "/" + md5[0]) as inpmd5:
+            for line in inpmd5:
+                line = line.rstrip().split()
+                sumNumb, filename = line[0], line[1].split("/")[-1]
+                md5_file.append([sumNumb, filename])
+        # write new output with full paths
+        outf = open((path + "/" + "md5checksum.md5"), "w")
+        for x in md5_file:
+            outf.write("%s\t%s\n" %(x[0], (path + "/" + x[1])))
+        outf.close()
+        # then do the check
+        os.system("%s -c %s > %s" %(MD5, (path + "/" + "md5checksum.md5"), (path + "/" + "md5checksum.txt")))
+        # ok now let's check if everything went ok
+        RUN = True
+        with open((path + "/" + "md5checksum.txt")) as md5check:
+            for line in md5check:
+                if RUN == False:
+                    pass
+                else:
+                    check = line.rstrip().split(" ")
+                    if check[-1] != "OK":
+                        RUN = False
+        # finally delete the created (alias) md5 file
+        os.system("rm %s" %((path + "/" + "md5checksum.md5")))
+    elif len(match_done) == 1:
+        print("## MD5 output found. Checking the file.")
+        RUN = True
+        with open((path + "/" + "md5checksum.txt")) as md5check:
+            for line in md5check:
+                if RUN == False:
+                    pass
+                else:
+                    check = line.rstrip().split(" ")
+                    if check[-1] != "OK":
+                        RUN = False
+    else:
+        print("## MD5 file NOT found. Will assume all files were correctly copied.")
+        RUN = True
+    return RUN
+
+### MAIN -- run before the rules -- identify input files and do md5sum check of the files
+inp_subreads = os.popen("ls %s/*subreads.bam" %(config["IN_DIR"])).read().rstrip()
+print("## Input subreads --> %s" %(inp_subreads))
+output_name = inp_subreads.split("/")[-1].replace(".subreads.bam", "")
+print("## Output name --> %s" %(output_name))
+# run md5 check
+print("## Now checking for MD5 files")
+RUN = checkSum(config["IN_DIR"], MD5)
+
+if RUN == True:
+    # Rule All -- define which rules to run based on the output files
+    rule all:
+        input:
+            # 1. do ccs analysis
+            expand("{out_dir}/{out_name}.ccs.bam", out_dir = config["OUT_DIR"], out_name = output_name),
+
+            # 2. primrose analysis
+            expand("{out_dir}/{out_name}.ccs.primrose.bam", out_dir = config["OUT_DIR"], out_name = output_name),
+
+            # 3. extract hifi and nonhifi reads
+            expand("{out_dir}/{out_name}.ccs.primrose.hifi.bam", out_dir = config["OUT_DIR"], out_name = output_name),
+
+            # 4. alignment of hifi and nonhifi reads to GRCh38
+            expand("{out_dir}/{out_name}.ccs.primrose.hifi.hg38.bam", out_dir = config["OUT_DIR"], out_name = output_name),
+            expand("{out_dir}/{out_name}.ccs.primrose.nonhifi.hg38.bam", out_dir = config["OUT_DIR"], out_name = output_name),
+
+            # 5. alignment of hifi and nonhifi reads to chm13
+            expand("{out_dir}/{out_name}.ccs.primrose.hifi.chm13.bam", out_dir = config["OUT_DIR"], out_name = output_name),
+            expand("{out_dir}/{out_name}.ccs.primrose.nonhifi.chm13.bam", out_dir = config["OUT_DIR"], out_name = output_name),
+
+            # 6. sample check
+            expand("{out_dir}/{out_name}.ccs.primrose.hifi.sample.txt", out_dir = config["OUT_DIR"], out_name = output_name)
+
+    # Rule for CCS analysis
+    rule ccs:
+        input:
+            expand(inp_subreads)
+        output:
+            expand("{out_dir}/{out_name}.ccs.bam", out_dir = config["OUT_DIR"], out_name = output_name),
+            expand("{out_dir}/{out_name}.ccs.report.txt", out_dir = config["OUT_DIR"], out_name = output_name),
+            expand("{out_dir}/{out_name}.ccs.log", out_dir = config["OUT_DIR"], out_name = output_name)
+        shell: """
+            {CCS} --min-passes 0 --min-rq 0 {input[0]} {output[0]} --report-file {output[1]} --log-file {output[2]} --log-level INFO --all-kinetics
+            """
+
+    # Rule for methylation analysis with primrose
+    rule primrose:
+        input:
+            expand("{out_dir}/{out_name}.ccs.bam", out_dir = config["OUT_DIR"], out_name = output_name)
+        output:
+            expand("{out_dir}/{out_name}.ccs.primrose.bam", out_dir = config["OUT_DIR"], out_name = output_name)
+        shell: """
+            {PRIMROSE} --min-passes 0 {input[0]} {output[0]}
+            """
+
+    # Rule for extracting CCS and non-CCS reads
+    rule extract_ccs_nonccs:
+        input:
+            expand("{out_dir}/{out_name}.ccs.primrose.bam", out_dir = config["OUT_DIR"], out_name = output_name)
+        output:
+            expand("{out_dir}/{out_name}.ccs.primrose.hifi.bam", out_dir = config["OUT_DIR"], out_name = output_name),
+            expand("{out_dir}/{out_name}.ccs.primrose.nonhifi.bam", out_dir = config["OUT_DIR"], out_name = output_name)
+        shell: """
+            {PYTHON} {EXTRACT_CCS} {input[0]} {output[0]} {output[1]}
+            """
+
+    # Rule for alignment of hifi reads to GRCh38
+    rule align_ccs:
+        input:
+            expand("{out_dir}/{out_name}.ccs.primrose.hifi.bam", out_dir = config["OUT_DIR"], out_name = output_name)
+        output:
+            expand("{out_dir}/{out_name}.ccs.primrose.hifi.hg38.bam", out_dir = config["OUT_DIR"], out_name = output_name),
+        shell: """
+            {ALIGN} align --preset CCS {H38CCS} --unmapped --sort {input[0]} {output[0]} --log-level=INFO
+            """
+
+    # Rule for alignment of non-hifi reads to GRCh38
+    rule align_nonccs:
+        input:
+            expand("{out_dir}/{out_name}.ccs.primrose.nonhifi.bam", out_dir = config["OUT_DIR"], out_name = output_name)
+        output:
+            expand("{out_dir}/{out_name}.ccs.primrose.nonhifi.hg38.bam", out_dir = config["OUT_DIR"], out_name = output_name),
+        shell: """
+            {ALIGN} align --preset SUBREAD {HG38SUBREADS} --unmapped --sort {input[0]} {output[0]} --log-level=INFO
+            """
+
+    # Rule for alignment of hifi reads to chm13
+    rule align_ccs_chm13:
+        input:
+            expand("{out_dir}/{out_name}.ccs.primrose.hifi.bam", out_dir = config["OUT_DIR"], out_name = output_name)
+        output:
+            expand("{out_dir}/{out_name}.ccs.primrose.hifi.chm13.bam", out_dir = config["OUT_DIR"], out_name = output_name),
+        shell: """
+            {ALIGN} align --preset CCS {CHM13CCS} --unmapped --sort {input[0]} {output[0]} --log-level=INFO
+            """
+
+    # Rule for alignment of non-hifi reads to chm13
+    rule align_nonccs_chm13:
+        input:
+            expand("{out_dir}/{out_name}.ccs.primrose.nonhifi.bam", out_dir = config["OUT_DIR"], out_name = output_name)
+        output:
+            expand("{out_dir}/{out_name}.ccs.primrose.nonhifi.chm13.bam", out_dir = config["OUT_DIR"], out_name = output_name),
+        shell: """
+            {ALIGN} align --preset SUBREAD {CHM13SUBREADS} --unmapped --sort {input[0]} {output[0]} --log-level=INFO
+            """
+
+    # Rule to do the sample check
+    rule sample_check:
+        input:
+            expand("{out_dir}/{out_name}.ccs.primrose.hifi.hg38.bam", out_dir = config["OUT_DIR"], out_name = output_name)
+        output:
+            expand("{out_dir}/{out_name}.ccs.primrose.hifi.sample.txt", out_dir = config["OUT_DIR"], out_name = output_name)
+        shell: """
+            {PYTHON} {SAMPLE_CHECK} {input[0]} {output[0]}
+            """
